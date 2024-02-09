@@ -6,7 +6,7 @@ const axios = require( 'axios' ); // Used for getting movie ratings pages so we 
 const cheerio = require( 'cheerio' ); // Used to extract media scores from page markup
 const express = require('express');
 const mongoose = require('mongoose');
-
+require('dotenv').config();
 
 /* --------------------------------- */
 /*           DATABASE SETUP          */
@@ -19,11 +19,11 @@ db.on('error', console.error.bind(console, 'Mongo connection error!'));
 
 /* Define what we store about each IMDB film/show */
 const MediaItem = mongoose.model(
-  'MediaItem',
+  'media_item',
   new Schema(
     {
       _id: {type: String, required: true},
-      trimmedRating: {type: Number, required: false}
+      trimmedScore: {type: Number, required: false}
     },
     { 
       timestamps: { updatedAt: 'last_updated' }
@@ -55,7 +55,7 @@ app.get(
     async function(req, res) {
         let query = req.query;
         if (query.id && query.id !== undefined ) {
-          let score = await new Score(query.id).trimmedScore;
+          let score = await new Score( query.id ).getTrimmedScore();
           res.send( JSON.stringify( score ) );
         } else {
           res.send( JSON.stringify( 'Oops theres been an issue!') );
@@ -77,22 +77,74 @@ app.listen(PORT, function() {
 class Score {
   constructor( queryID ) {
     this.id = queryID;
-    this.recentScore = this.checkForRecentTrimmedScore();
-    this.trimmedScore = this.calculateTrimmedScore();
+    this.recentScore = false;
+  }
+
+  async getTrimmedScore() {
+    this.recentScore = await this.checkForRecentTrimmedScore();
+    return this.recentScore ? this.recentScore : await this.calculateTrimmedScore();
   }
 
   /* Check the database for if we have a trimmed score from today, if so get it */
   async checkForRecentTrimmedScore() {
+    const recentScore = await MediaItem.exists({ _id: this.id });
+    if ( recentScore ) {
+      console.log('We have a recent score for this one buster!');
+      await MediaItem.findOne({ _id: this.id })
+        .then( score => {
+          let todaysDate = new Date().setHours(0,0,0,0);
+          let updatedDate = score.last_updated.setHours(0,0,0,0);
+      
+          /* If the trimmed score in database is from today, then it is ok to send back */
+          if ( todaysDate === updatedDate ) {
+            return score.trimmedScore;
+          }
+          /* If the tirmmed score in database is not from today, it is old and we need to generate a new one and send that instead */
+          else {
+            return false;
+          }
+           
+        })
+        .catch( err => {
+          console.error( err );
+          return false;
+        })
+    } else {
+      await this.addNewMediaItem();
+      return false;
+    }
+  }
 
+  async addNewMediaItem() {
+    const newMediaItem = new MediaItem({ 
+      _id:  this.id,
+    });
+    await newMediaItem.save();
+    return
+  }
+
+  async updateStoredTrimmedScore( trimmedScore ) {
+    await MediaItem.findOne({ _id: this.id })
+      .then( score => {
+        score.trimmedScore = trimmedScore;
+        score.save();
+
+        console.log('New trimmed score addded to DB, ROCK ON!!!!!!!!');
+      })
+      .catch( err => {
+        console.errror( err );
+      })
   }
 
   /* Calculate a trimmed score */
   async calculateTrimmedScore() {
+    console.log('Calculating a new trimmed score ASAP!');
+
     let url = `https://www.imdb.com/title/${this.id}/ratings/`;
 
     /* Cloudfront on IMDB does not allow axios user agent so spoof a common browser one */
     const headers = {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/111.0.0.0 Safari/537.36';
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/111.0.0.0 Safari/537.36'
     }
     try {
       console.log('Checking: ' + url );
@@ -120,6 +172,11 @@ class Score {
 
           /* Final calculation, finding the mean of our newly found data */
           let trimmedScore = ( voteSum / totalVotes ).toFixed(1);
+
+          console.log('Ok Calculated! Now we just need to update the DB...');
+          
+          this.updateStoredTrimmedScore( trimmedScore );
+
           return trimmedScore;
       }
       /* If anything else (i.e. NOT success) then move on */
