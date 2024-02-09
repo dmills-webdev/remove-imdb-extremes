@@ -41,14 +41,13 @@ const app = express();
 app.use(express.json());
 app.use((req, res, next) => {
   const corsWhitelist = [
-      'https://www.imdb.com/',
-      'https://imdb.com/',
+      'https://www.imdb.com',
+      'https://imdb.com' 
   ];
   if ( corsWhitelist.includes(req.headers.origin) ) {
       res.header('Access-Control-Allow-Origin', req.headers.origin);
       res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
   }
-
   next();
 });
 
