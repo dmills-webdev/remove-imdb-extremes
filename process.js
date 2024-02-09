@@ -15,7 +15,7 @@ const Schema = mongoose.Schema;
 const mongoDb = process.env.MONGOURL;
 mongoose.connect(mongoDb, {})
 const db = mongoose.connection;
-db.on('error', console.error.bind(console, 'Mongo connection error!'));
+db.on('error', console.error.bind(console, 'MongoDB connection error!'));
 
 /* Define what we store about each IMDB film/show */
 const MediaItem = mongoose.model(
@@ -58,7 +58,7 @@ app.get(
           let score = await new Score( query.id ).getTrimmedScore();
           res.send( JSON.stringify( score ) );
         } else {
-          res.send( JSON.stringify( 'Oops theres been an issue!') );
+          res.send( JSON.stringify( false ) );
         }
     })
 
@@ -81,26 +81,29 @@ class Score {
   }
 
   async getTrimmedScore() {
-    this.recentScore = await this.checkForRecentTrimmedScore();
+    await this.checkForRecentTrimmedScore();
     return this.recentScore ? this.recentScore : await this.calculateTrimmedScore();
   }
 
   /* Check the database for if we have a trimmed score from today, if so get it */
   async checkForRecentTrimmedScore() {
     const recentScore = await MediaItem.exists({ _id: this.id });
+   
     if ( recentScore ) {
-      console.log('We have a recent score for this one buster!');
+      console.log('Recent trimmed score found: Checking if still valid...');
       await MediaItem.findOne({ _id: this.id })
         .then( score => {
           let todaysDate = new Date().setHours(0,0,0,0);
           let updatedDate = score.last_updated.setHours(0,0,0,0);
       
-          /* If the trimmed score in database is from today, then it is ok to send back */
+          /* If the trimmed score in database is from today, then it is ok to set and send back */
           if ( todaysDate === updatedDate ) {
-            return score.trimmedScore;
+            console.log('Valid: Returning value now');
+            this.recentScore = score.trimmedScore;
           }
           /* If the tirmmed score in database is not from today, it is old and we need to generate a new one and send that instead */
           else {
+            console.log('INVALID: A new one will need to be calculated');
             return false;
           }
            
@@ -124,12 +127,12 @@ class Score {
   }
 
   async updateStoredTrimmedScore( trimmedScore ) {
+    console.log('Attempting to update the stored trimmed score in the database...')
     await MediaItem.findOne({ _id: this.id })
       .then( score => {
         score.trimmedScore = trimmedScore;
         score.save();
-
-        console.log('New trimmed score addded to DB, ROCK ON!!!!!!!!');
+        console.log('Save successful');
       })
       .catch( err => {
         console.errror( err );
@@ -138,7 +141,7 @@ class Score {
 
   /* Calculate a trimmed score */
   async calculateTrimmedScore() {
-    console.log('Calculating a new trimmed score ASAP!');
+    console.log('Calculating a new trimmed score...');
 
     let url = `https://www.imdb.com/title/${this.id}/ratings/`;
 
@@ -154,8 +157,6 @@ class Score {
   
       /* If 200 (i.e. success) then add to results array */
       if (res.status === 200 ) {
-          console.log('GOOD');
-
           /* Find the wider data from page source, and grab the content data we want */
           const $ = cheerio.load(res.data);
           let dataSelector = $('#__NEXT_DATA__').text();
@@ -173,7 +174,7 @@ class Score {
           /* Final calculation, finding the mean of our newly found data */
           let trimmedScore = ( voteSum / totalVotes ).toFixed(1);
 
-          console.log('Ok Calculated! Now we just need to update the DB...');
+          console.log(`Success: New score is ${trimmedScore}`);
           
           this.updateStoredTrimmedScore( trimmedScore );
 
@@ -181,11 +182,10 @@ class Score {
       }
       /* If anything else (i.e. NOT success) then move on */
       else {
-          console.log('BAD');
+          console.log('FAILURE: Could not find the page!');
       }  
-    } catch ( error ) {
-          console.log('Error with Axios finding that page...');
-          console.log(error);
+    } catch ( err ) {
+          console.error( err );
     }
   }
 }
